@@ -14,6 +14,7 @@ import getFilenameExtension from './helpers/getFilenameExtension';
 import MediaType from './types/MediaType';
 import { LogLevel } from 'telegram/extensions/Logger';
 import cliProgress from 'cli-progress';
+import pLimit from 'p-limit';
 
 class TelegramBulkDownloader {
   private storage: Byteroo;
@@ -22,14 +23,13 @@ class TelegramBulkDownloader {
   isDownloading: boolean;
   private SIGINT: boolean;
   private client?: TelegramClient;
+
   constructor() {
     this.storage = new Byteroo({
       name: 'TelegramBulkDownloader',
       autocommit: true,
     });
-    this.credentials = this.storage.getContainerSync(
-      'credentials'
-    ) as Container;
+    this.credentials = this.storage.getContainerSync('credentials') as Container;
     this.state = this.storage.getContainerSync('state') as Container;
     this.isDownloading = false;
     this.SIGINT = false;
@@ -74,7 +74,7 @@ class TelegramBulkDownloader {
         outPath: path.resolve(outPath),
         metadata,
         mediaTypes: mediaTypes.map((e) => ({ type: e, offset: 0 })),
-        originalId: query.id
+        originalId: query.id,
       });
       await this.download(res);
     } catch (err) {
@@ -123,61 +123,64 @@ class TelegramBulkDownloader {
         filter: getInputFilter(mediaType),
       });
 
-      const mediaMessages = messages;
-
       const downloadDir = this.state.get(id).outPath;
       if (!fs.existsSync(downloadDir)) {
         fs.mkdirSync(downloadDir, { recursive: true });
       }
 
-      let msgId = offset;
-      for (const msg of mediaMessages) {
-        const bar = new cliProgress.SingleBar(
-          {
-            format: `${msg.id}.${getFilenameExtension(
-              msg
-            )} {bar} {percentage}% | ETA: {eta}s`,
-          },
-          cliProgress.Presets.legacy
+      // Limiter mit maximal 15 parallelen Downloads
+      const limit = pLimit(15);
+      const tasks: Promise<void>[] = [];
+
+      for (const msg of messages) {
+        tasks.push(
+          limit(async () => {
+            const bar = new cliProgress.SingleBar(
+              {
+                format: `${msg.id}.${getFilenameExtension(
+                  msg
+                )} | {bar} {percentage}% | ETA: {eta}s`,
+              },
+              cliProgress.Presets.shades_classic
+            );
+            bar.start(100, 0);
+
+            try {
+              const buffer = await this.client!.downloadMedia(msg, {
+                progressCallback: (downloaded, total) => {
+                  const pct = Math.round(
+                    (downloaded as number) / (total as number) * 100
+                  );
+                  bar.update(pct);
+                },
+              });
+              bar.update(100);
+              const filePath = path.join(
+                downloadDir,
+                `${msg.id}.${getFilenameExtension(msg)}`
+              );
+              fs.writeFileSync(filePath, buffer as any);
+              if (jsonSerializer) await jsonSerializer.append(msg);
+            } catch (err) {
+              console.warn(`Fehler bei Nachricht ${msg.id}:`, err);
+            } finally {
+              bar.stop();
+            }
+          })
         );
-        bar.start(100, 0);
-        try {
-          const buffer = await this.client.downloadMedia(msg, {
-            progressCallback: (downloaded, total) => {
-              if (this.SIGINT)
-                throw new Error(`Aborting download, SIGINT=true`);
-              const ratio = Number(downloaded) / Number(total);
-              const progress = Math.round(Number(ratio) * 100);
-              bar.update(progress);
-            },
-          });
-          bar.update(100);
-          bar.stop();
-          const filePath = path.join(
-            downloadDir,
-            `${msg.id}.${getFilenameExtension(msg)}`
-          );
-          fs.writeFileSync(filePath, buffer as any);
-          msgId = msg.id;
-        } catch (err) {
-          console.warn(err);
-        }
-        if (jsonSerializer) await jsonSerializer.append(msg);
-        if (this.SIGINT) break;
       }
 
-      offset = mediaMessages.length <= 0 ? offset + 999 : msgId;
+      // Bis zu 15 gleichzeitig, dann alle beenden
+      await Promise.all(tasks);
 
+      // Offset aktualisieren
+      const lastId = messages.length > 0 ? messages[messages.length - 1].id : offset;
+      offset = messages.length === 0 ? offset + 999 : lastId;
       this.state.set(id, {
         ...this.state.get(id),
-        mediaTypes: this.state.get(id).mediaTypes.map((e: any) => {
-          if (e.type === mediaType)
-            return {
-              ...e,
-              offset,
-            };
-          return e;
-        }),
+        mediaTypes: this.state.get(id).mediaTypes.map((e: any) =>
+          e.type === mediaType ? { ...e, offset } : e
+        ),
       });
 
       if (this.SIGINT) {
