@@ -25,10 +25,7 @@ class TelegramBulkDownloader {
   private client?: TelegramClient;
 
   constructor() {
-    this.storage = new Byteroo({
-      name: 'TelegramBulkDownloader',
-      autocommit: true,
-    });
+    this.storage = new Byteroo({ name: 'TelegramBulkDownloader', autocommit: true });
     this.credentials = this.storage.getContainerSync('credentials') as Container;
     this.state = this.storage.getContainerSync('state') as Container;
     this.isDownloading = false;
@@ -37,48 +34,37 @@ class TelegramBulkDownloader {
 
   private async newDownload() {
     if (!this.client) throw new Error('TelegramClient undefined');
-    const query = await inquirer.prompt([
-      {
-        name: 'id',
-        message: 'Please enter username or chat id of target: ',
-      },
-    ]);
+    const query = await inquirer.prompt([{ name: 'id', message: 'Bitte Benutzername oder Chat-ID eingeben:' }]);
 
     try {
       const res = await this.client.getEntity(query.id);
-      const { metadata } = await inquirer.prompt([
-        {
-          name: 'metadata',
-          message: 'Do you want to include metadata.json? (Recommended: no)',
-          type: 'confirm',
-        },
-      ]);
+      const { metadata } = await inquirer.prompt([{ name: 'metadata', message: 'Metadaten einbinden? (Empfohlen: nein)', type: 'confirm' }]);
       let mediaTypes: MediaType[] = [];
       while (mediaTypes.length <= 0) {
         mediaTypes = await checkbox({
-          message: 'Select media types to download',
+          message: 'Wähle Medientypen:',
           choices: [
-            { name: 'Pictures', value: 'InputMessagesFilterPhotos' },
+            { name: 'Bilder', value: 'InputMessagesFilterPhotos' },
             { name: 'Videos', value: 'InputMessagesFilterVideo' },
-            { name: 'Documents', value: 'InputMessagesFilterDocument' },
-            { name: 'Music', value: 'InputMessagesFilterMusic' },
-            { name: 'Voice messages', value: 'InputMessagesFilterVoice' },
+            { name: 'Dokumente', value: 'InputMessagesFilterDocument' },
+            { name: 'Musik', value: 'InputMessagesFilterMusic' },
+            { name: 'Sprachnachrichten', value: 'InputMessagesFilterVoice' },
             { name: 'GIFs', value: 'InputMessagesFilterGif' },
           ],
         });
       }
-      const outPath = await ask('Enter the folder path for file storage: ');
+      const outPath = await ask('Ordnerpfad für Dateien:' );
       this.state.set(res.id.toString(), {
         displayName: extractDisplayName(res),
         entityJson: res.toJSON(),
         outPath: path.resolve(outPath),
         metadata,
-        mediaTypes: mediaTypes.map((e) => ({ type: e, offset: 0 })),
+        mediaTypes: mediaTypes.map(e => ({ type: e, offset: 0 })),
         originalId: query.id,
       });
       await this.download(res);
     } catch (err) {
-      console.error('Failed to retrieve chat', err);
+      console.error('Fehler beim Abrufen des Chats', err);
       this.main();
     }
   }
@@ -100,23 +86,18 @@ class TelegramBulkDownloader {
     if (!this.client) throw new Error('TelegramClient undefined');
     this.isDownloading = true;
     const id = entity.id.toString();
-    const latestMessage = await this.client.getMessages(entity, { limit: 1 });
-    this.state.set(id, { ...this.state.get(id), limit: latestMessage[0].id });
+    const latest = await this.client.getMessages(entity, { limit: 1 });
+    this.state.set(id, { ...this.state.get(id), limit: latest[0].id });
 
-    const metadataOption = this.state.get(id).metadata;
+    const metaOpt = this.state.get(id).metadata;
     let jsonSerializer;
-    if (metadataOption) {
-      jsonSerializer = new JsonSerializer(
-        path.join(this.state.get(id).outPath, 'metadata.json')
-      );
+    if (metaOpt) {
+      jsonSerializer = new JsonSerializer(path.join(this.state.get(id).outPath, 'metadata.json'));
     }
 
     while (true) {
-      let offset = this.state
-        .get(id)
-        .mediaTypes.find((e: any) => e.type === mediaType).offset;
-
-      const messages = await this.client.getMessages(entity, {
+      let offset = this.state.get(id).mediaTypes.find((e:any) => e.type === mediaType).offset;
+      const msgs = await this.client.getMessages(entity, {
         limit: 1000,
         offsetId: offset,
         reverse: true,
@@ -124,189 +105,89 @@ class TelegramBulkDownloader {
       });
 
       const downloadDir = this.state.get(id).outPath;
-      if (!fs.existsSync(downloadDir)) {
-        fs.mkdirSync(downloadDir, { recursive: true });
-      }
+      if (!fs.existsSync(downloadDir)) fs.mkdirSync(downloadDir, { recursive: true });
 
-      // Limiter mit maximal 15 parallelen Downloads
+      // bis zu 15 parallele Downloads
       const limit = pLimit(15);
       const tasks: Promise<void>[] = [];
 
-      for (const msg of messages) {
-        tasks.push(
-          limit(async () => {
-            const bar = new cliProgress.SingleBar(
-              {
-                format: `${msg.id}.${getFilenameExtension(
-                  msg
-                )} | {bar} {percentage}% | ETA: {eta}s`,
-              },
-              cliProgress.Presets.shades_classic
-            );
-            bar.start(100, 0);
-
-            try {
-              const buffer = await this.client!.downloadMedia(msg, {
-                progressCallback: (downloaded, total) => {
-                  const pct = Math.round(
-                    (downloaded as number) / (total as number) * 100
-                  );
-                  bar.update(pct);
-                },
-              });
-              bar.update(100);
-              const filePath = path.join(
-                downloadDir,
-                `${msg.id}.${getFilenameExtension(msg)}`
-              );
-              fs.writeFileSync(filePath, buffer as any);
-              if (jsonSerializer) await jsonSerializer.append(msg);
-            } catch (err) {
-              console.warn(`Fehler bei Nachricht ${msg.id}:`, err);
-            } finally {
-              bar.stop();
-            }
-          })
-        );
+      for (const msg of msgs) {
+        tasks.push(limit(async () => {
+          const bar = new cliProgress.SingleBar({ format: `${msg.id}.${getFilenameExtension(msg)} | {bar} {percentage}% | ETA: {eta}s` }, cliProgress.Presets.shades_classic);
+          bar.start(100, 0);
+          try {
+            const buf = await this.client!.downloadMedia(msg, { progressCallback: (dl, tot) => bar.update(Math.round((dl as number)/(tot as number)*100)) });
+            bar.update(100);
+            const file = path.join(downloadDir, `${msg.id}.${getFilenameExtension(msg)}`);
+            fs.writeFileSync(file, buf as any);
+            if (jsonSerializer) await jsonSerializer.append(msg);
+          } catch (err) {
+            console.warn(`Fehler bei Nachricht ${msg.id}:`, err);
+          } finally {
+            bar.stop();
+          }
+        }))
       }
-
-      // Bis zu 15 gleichzeitig, dann alle beenden
       await Promise.all(tasks);
 
-      // Offset aktualisieren
-      const lastId = messages.length > 0 ? messages[messages.length - 1].id : offset;
-      offset = messages.length === 0 ? offset + 999 : lastId;
-      this.state.set(id, {
-        ...this.state.get(id),
-        mediaTypes: this.state.get(id).mediaTypes.map((e: any) =>
-          e.type === mediaType ? { ...e, offset } : e
-        ),
-      });
+      const lastId = msgs.length>0? msgs[msgs.length-1].id : offset;
+      offset = msgs.length===0? offset+999 : lastId;
+      this.state.set(id, { ...this.state.get(id), mediaTypes: this.state.get(id).mediaTypes.map((e:any) => e.type===mediaType? {...e,offset} : e) });
 
       if (this.SIGINT) {
-        console.log(`Exiting, SIGINT=${this.SIGINT}`);
+        console.log(`Beende, SIGINT=${this.SIGINT}`);
         await this.client.disconnect();
         await this.client.destroy();
         await this.state.commit();
         process.exit(0);
       }
-      if (offset >= this.state.get(id).limit) {
-        console.log(`Exiting, SIGINT=${this.SIGINT}`);
-        this.state.set(id, {
-          ...this.state.get(id),
-          mediaTypes: this.state
-            .get(id)
-            .mediaTypes.filter((e: any) => e.type !== mediaType),
-        });
-        break;
-      }
+      if (offset >= this.state.get(id).limit) break;
     }
   }
 
   private async resume() {
     if (!this.client) throw new Error('TelegramClient undefined');
-    const res = await inquirer.prompt({
-      name: 'resume',
-      type: 'list',
-      message: 'Choose a chat',
-      choices: [
-        ...this.state
-          .list()
-          .map((e) => ({ name: this.state.get(e).displayName || e, value: e })),
-        { name: 'Back', value: 'backbutton' },
-      ],
-    });
-
-    if (res.resume === 'backbutton') {
-      return this.main();
-    }
-
-    const entityRes = await this.client.getEntity(
-      this.state.get(res.resume).entityJson.username ||
-        this.state.get(res.resume).originalId
-    );
-    this.download(entityRes);
+    const res = await inquirer.prompt({ name:'resume', type:'list', message:'Chat wählen', choices:[
+      ...this.state.list().map(e=>({name:this.state.get(e).displayName||e,value:e})),
+      {name:'Zurück',value:'back'}
+    ]});
+    if (res.resume==='back') return this.main();
+    const ent = await this.client.getEntity(this.state.get(res.resume).entityJson.username||this.state.get(res.resume).originalId);
+    this.download(ent);
   }
 
   async main() {
     let API_ID = this.credentials.get('API_ID');
-    if (!API_ID) {
-      API_ID = await ask('Please provide your API_ID: ');
-      this.credentials.set('API_ID', API_ID);
-    }
-
+    if (!API_ID) { API_ID=await ask('API_ID: '); this.credentials.set('API_ID',API_ID); }
     let API_HASH = this.credentials.get('API_HASH');
-    if (!API_HASH) {
-      API_HASH = await ask('Please provide your API_HASH: ', {
-        type: 'password',
-      });
-      this.credentials.set('API_HASH', API_HASH);
-    }
-
+    if (!API_HASH) { API_HASH=await ask('API_HASH: ',{type:'password'}); this.credentials.set('API_HASH',API_HASH); }
     if (!this.client) {
-      this.client = new TelegramClient(
-        new StringSession(this.credentials.get('session')),
-        parseInt(API_ID),
-        API_HASH,
-        {}
-      );
+      this.client = new TelegramClient(new StringSession(this.credentials.get('session')),parseInt(API_ID),API_HASH,{});
       this.client.setLogLevel(LogLevel.NONE);
     }
-
     if (this.client.disconnected) {
       await this.client.start({
-        phoneNumber: ask.bind(undefined, 'Please enter your phone number: '),
-        password: ask.bind(undefined, 'Please enter your password: ', {
-          type: 'password',
-        }),
-        phoneCode: ask.bind(undefined, 'Please enter the code you received: ', {
-          type: 'password',
-        }),
-        onError: (err) => console.log(err),
+        phoneNumber:ask.bind(undefined,'Telefonnummer: '),
+        password:ask.bind(undefined,'Passwort: ',{type:'password'}),
+        phoneCode:ask.bind(undefined,'Code: ',{type:'password'}),
+        onError:(e)=>console.log(e)
       });
-
-      this.credentials.set(
-        'session',
-        await (this.client as any).session.save()
-      );
+      this.credentials.set('session',await (this.client as any).session.save());
     }
-
-    const menu = await inquirer.prompt({
-      name: 'option',
-      type: 'list',
-      message: 'Choose an option',
-      choices: [
-        { name: 'Start new download', value: 'new_download' },
-        { name: 'Resume active download', value: 'resume' },
-        { name: 'Exit', value: 'exit' },
-      ],
-    });
-
-    switch (menu.option) {
-      case 'exit':
-        process.exit(0);
-      case 'new_download':
-        this.newDownload();
-        break;
-      case 'resume':
-        this.resume();
-        break;
+    const menu = await inquirer.prompt({ name:'option',type:'list',message:'Option wählen',choices:[
+      {name:'Neuer Download',value:'new'},
+      {name:'Fortsetzen',value:'resume'},
+      {name:'Beenden',value:'exit'}
+    ]});
+    switch(menu.option) {
+      case 'exit': process.exit(0);
+      case 'new': this.newDownload(); break;
+      case 'resume': this.resume(); break;
     }
   }
 
-  run() {
-    this.main();
-
-    process.on('SIGINT', () => {
-      console.log('Caught interrupt signal');
-      if (!this.isDownloading) process.exit(0);
-      this.SIGINT = true;
-    });
-  }
-
-  getStoragePath() {
-    return this.storage.path;
-  }
+  run() { this.main(); process.on('SIGINT',()=>{ console.log('Interrupt'); if(!this.isDownloading) process.exit(0); this.SIGINT=true; }); }
+  getStoragePath(){ return this.storage.path; }
 }
 
 export default TelegramBulkDownloader;
