@@ -1,27 +1,39 @@
- {
-   "name": "telegram-bulk-downloader",
-   "version": "1.1.2",
-+  "prepare": "npm run build",
-   "scripts": {
-     "build": "tsc -p tsconfig.json",
-     "start": "node build/bin.js"
-   },
-   "dependencies": {
-+    "p-limit": "^4.0.0",            // fehlt für deinen Import
-     "@inquirer/checkbox": "^1.3.3",
-     "byteroo": "^1.4.2",
-     "cli-progress": "^3.12.0",
-     "commander": "^11.0.0",
-     "inquirer": "^8.2.5",
-     "mime-types": "^2.1.35",
-     "telegram": "^2.17.10"
-   },
-   "devDependencies": {
-+    "typescript": "^5.1.6",        // falls du‘s nicht global installierst
-+    "@types/node": "^20.3.1",      // für fs, path, process, Buffer
-+    "@types/p-limit": "^3.0.0",    // Typen zu p-limit
-     "@types/cli-progress": "^3.11.0",
-     "@types/inquirer": "^9.0.3",
-     "@types/mime-types": "^2.1.1"
-   }
- }
+{
+  "name": "telegram-bulk-downloader",
+  "version": "1.1.2",
+  "description": "Command-line tool that allows you to download media files from a Telegram chat",
+  "main": "build/index.js",
+  "bin": "build/bin.js",
+  "scripts": {
+    "prepare": "npm run build",
+    "build": "tsc -p tsconfig.json",
+    "start": "node build/bin.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/badthumbs/telegram-bulk-downloader.git"
+  },
+  "author": "JMax45",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/badthumbs/telegram-bulk-downloader/issues"
+  },
+  "dependencies": {
+    "@inquirer/checkbox": "^1.3.3",
+    "byteroo": "^1.4.2",
+    "cli-progress": "^3.12.0",
+    "commander": "^11.0.0",
+    "inquirer": "^8.2.5",
+    "mime-types": "^2.1.35",
+    "p-limit": "^4.0.0",
+    "telegram": "^2.17.10"
+  },
+  "devDependencies": {
+    "typescript": "^5.1.6",
+    "@types/node": "^20.3.1",
+    "@types/p-limit": "^3.0.0",
+    "@types/cli-progress": "^3.11.0",
+    "@types/inquirer": "^9.0.3",
+    "@types/mime-types": "^2.1.1"
+  }
+}
